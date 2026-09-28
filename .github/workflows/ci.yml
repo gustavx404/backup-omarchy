@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    name: Shell and safety regressions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes jq rsync zstd sqlite3 shellcheck
+
+      - name: Check Bash syntax
+        run: bash -n install.sh src/omarchy-backup.sh tests/regression.sh
+
+      - name: Run ShellCheck
+        run: shellcheck --severity=error install.sh src/omarchy-backup.sh tests/regression.sh
+
+      - name: Run regression checks with isolated fake remotes
+        run: bash tests/regression.sh
+
+  secrets:
+    name: Scan repository for secrets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Scan with Gitleaks
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/repo:ro" \
+            --workdir /repo \
+            --env GIT_CONFIG_COUNT=1 \
+            --env GIT_CONFIG_KEY_0=safe.directory \
+            --env GIT_CONFIG_VALUE_0=/repo \
+            ghcr.io/gitleaks/gitleaks:v8.28.0 \
+            git --redact --log-opts=--all .

@@ -1,0 +1,13 @@
+[Unit]
+Description=Omarchy Backup a cada 2 horas
+
+[Timer]
+# Primeira corrida dez minutos depois de ativar o timer e, depois, nos
+# horarios pares. OnCalendar + Persistent recupera uma rodada perdida desligado.
+OnActiveSec=10min
+OnCalendar=*-*-* 00/2:00:00
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

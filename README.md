@@ -31,11 +31,19 @@ cd ~/Projects/omarchy-backup-plugin
 ./install.sh
 ```
 
-O instalador adiciona o painel, cria o comando `backup_multiplo` e ativa o timer
+O instalador adiciona o painel, cria o comando `omarchy-backup` e ativa o timer
 de usuário de duas em duas horas. Ele não exige remote chamado `Filen`. Em uma
 instalação nova, se o remote legado `Filen:` não estiver configurado, o painel
 começa sem syncs: abra **+ Novo sync** e crie o primeiro. Instalações antigas
 com `Filen:` mantêm a migração do sync pessoal existente.
+
+## Estrutura do projeto
+
+- `src/omarchy-backup.sh`: backend e comando `omarchy-backup`.
+- `src/config-excludes.txt` e `src/rclone-filter.txt`: regras de exclusão.
+- `omarchy-plugin/`: painel e widget da barra em QML.
+- `systemd/`: serviço e timer do usuário.
+- `install.sh`: instalação, atualização e remoção do plugin.
 
 ## Criar um sync pelo painel
 
@@ -62,20 +70,24 @@ orienta a configurá-los antes de salvar um sync.
 ## Comandos
 
 ```bash
-backup_multiplo status
-backup_multiplo status --json
-backup_multiplo snapshot
-backup_multiplo --dry-run
-backup_multiplo syncs list --json
-backup_multiplo syncs remotes --json
-backup_multiplo syncs run ID
-backup_multiplo syncs run ID --resync --mode newer
+omarchy-backup status
+omarchy-backup status --json
+omarchy-backup snapshot
+omarchy-backup verify
+omarchy-backup verify --download
+omarchy-backup --dry-run
+omarchy-backup syncs list --json
+omarchy-backup syncs remotes --json
+omarchy-backup syncs run ID
+omarchy-backup syncs run ID --resync --mode newer
 ```
 
 `syncs run ID --resync --mode` aceita `newer`, `path1` ou `path2`. `newer`
 preserva o arquivo mais recente em conflitos; `path1` prioriza a origem local e
 `path2` prioriza o destino remoto. O baseline de um job é independente dos
-demais.
+demais. `verify` verifica a integridade dos snapshots locais e compara os
+arquivos de cada sync ativo com seu destino configurado, sem alterar os dados.
+Use `verify --download` para comparar também o conteúdo dos arquivos.
 
 ## Destino dos snapshots locais
 
@@ -105,6 +117,33 @@ desse job também podem impedir o envio.
 
 O rclone exige recriar o baseline de um `bisync` quando os filtros mudam. O
 painel identifica esse estado e pede uma decisão antes de iniciar o resync.
+
+## CI e prevenção de regressões
+
+O workflow do GitHub Actions roda em pull requests para qualquer branch, em
+pushes para `main` e manualmente. Ele valida sintaxe Bash, executa ShellCheck
+em nível de erro e roda `tests/regression.sh` com diretório pessoal temporário
+e um rclone falso; nenhum teste acessa um provider ou altera arquivos do usuário.
+As verificações cobrem o parser do painel, `verify` somente leitura, o modo
+`copy`, snapshots sem favoritos, sanitização de URLs GTK, bloqueio de chaves em
+maiúsculas, destinos de snapshot com tentativa de sair da pasta e permissões da
+configuração. O job Gitleaks usa a CLI oficial para examinar todo o histórico
+disponível, inclusive commits vindos de outros pais de merge, com os valores
+encontrados redigidos na saída.
+
+Rode localmente as mesmas checagens principais antes de publicar:
+
+```bash
+bash -n install.sh src/omarchy-backup.sh tests/regression.sh
+shellcheck --severity=error install.sh src/omarchy-backup.sh tests/regression.sh
+bash tests/regression.sh
+```
+
+As verificações automatizadas usam um provider simulado. Antes de uma versão,
+valide também o painel com `omarchy plugin validate`, confira a instalação em
+uma sessão Omarchy e revise visualmente os tamanhos compactos e responsivos.
+Não inclua arquivos de configuração real do rclone, logs pessoais, snapshots
+nem credenciais nos testes ou nos artefatos do CI.
 
 ## Desinstalar
 

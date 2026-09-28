@@ -4,7 +4,7 @@
 
 **Objetivo:** gerenciar syncs pessoais pelo painel Omarchy Backup e executá-los pelo timer global existente.
 
-**Arquitetura:** `backup_multiplo.sh` mantém e valida a configuração privada versionada em `~/.config/backup-multiplo/syncs.json`, migra o job Filen atual e carrega jobs ativos no runner. O status JSON expõe jobs configurados e resultados. `BackupDashboard.qml` oferece lista e formulário local para criar, editar, ativar/desativar, remover e executar explicitamente.
+**Arquitetura:** `src/omarchy-backup.sh` mantém e valida a configuração privada versionada em `~/.config/backup-multiplo/syncs.json`, migra o job Filen atual e carrega jobs ativos no runner. O status JSON expõe jobs configurados e resultados. `omarchy-plugin/BackupDashboard.qml` oferece lista e formulário local para criar, editar, ativar/desativar, remover e executar explicitamente.
 
 **Stack:** Bash, jq, rclone, Quickshell QML e systemd --user já usados pelo projeto.
 
@@ -37,7 +37,7 @@
 
 ### Tarefa 1: armazenamento e gestão de configuração
 
-**Arquivos:** `backup_multiplo.sh`.
+**Arquivos:** `src/omarchy-backup.sh`.
 
 **Interfaces:**
 - Produz `syncs list --json`, `syncs upsert --json <objeto>`, `syncs set-enabled <id> <0|1>` e `syncs remove <id>`.
@@ -55,7 +55,7 @@
 
 ### Tarefa 2: integração de jobs ao runner e status
 
-**Arquivos:** `backup_multiplo.sh`, `rclone-filter.txt`.
+**Arquivos:** `src/omarchy-backup.sh`, `src/rclone-filter.txt`.
 
 **Consome:** configuração e funções de Tarefa 1.
 

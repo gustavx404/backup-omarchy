@@ -1,6 +1,5 @@
 [Unit]
-Description=Backup pessoal do Omarchy no Filen
-Documentation=file:%h/Projects/backup/README.md
+Description=Omarchy Backup
 After=network-online.target
 Wants=network-online.target
 # nao trava o boot se a rede demorar; o timer tenta de novo
@@ -14,7 +13,7 @@ Nice=15
 IOSchedulingClass=idle
 CPUSchedulingPolicy=idle
 
-ExecStart=%h/Projects/backup/backup_multiplo.sh
+ExecStart=%h/.local/bin/omarchy-backup
 
 # bisync no backend cifrado do Filen pode demorar; o script ja tem timeout
 # interno por job (RCLONE_MAX_SECONDS). Este e so o teto do systemd.

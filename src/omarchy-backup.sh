@@ -1,35 +1,30 @@
 #!/usr/bin/env bash
 #
-# backup_multiplo.sh - backup pessoal do Omarchy via rclone nativo.
+# omarchy-backup.sh - backup do Omarchy via rclone.
 #
-# Jobs atuais:
-#   ~/personal <->  Filen:personal   (bisync bidirecional)
 # Antes de cada rodada, cria snapshots restauraveis das configuracoes seguras do
 # Omarchy e somente dos favoritos dos navegadores. Perfis, cookies, logins,
 # historico e sessoes nunca entram nos arquivos enviados.
 #
-# O proprio repo mora em ~/Projects/backup e e publicado num remoto Git privado.
-# O bisync cobre somente ~/personal; o historico do codigo fica no Git.
-#
 # Uso:
-#   ./backup_multiplo.sh                   # roda todos os jobs
-#   ./backup_multiplo.sh status [--brief]  # estado da ultima rodada (offline)
-#   ./backup_multiplo.sh --dry-run         # simula, nao grava nada
-#   ./backup_multiplo.sh snapshot          # atualiza/testa configuracoes e favoritos
-#   ./backup_multiplo.sh verify --download # restaura amostra e compara todo o remoto
-#   ./backup_multiplo.sh --resync          # (re)cria o baseline do bisync; em
+#   omarchy-backup                   # roda todos os jobs
+#   omarchy-backup status [--brief]  # estado da ultima rodada (offline)
+#   omarchy-backup --dry-run         # simula, nao grava nada
+#   omarchy-backup snapshot          # atualiza/testa configuracoes e favoritos
+#   omarchy-backup verify --download # restaura amostra e compara todo o remoto
+#   omarchy-backup --resync          # (re)cria o baseline do bisync; em
 #                                          #   empate vence o arquivo mais NOVO
-#   ./backup_multiplo.sh --resync-from-pc      # em empate o PC vence
-#   ./backup_multiplo.sh --resync-from-remote  # em empate o destino vence
+#   omarchy-backup --resync-from-pc      # em empate o PC vence
+#   omarchy-backup --resync-from-remote  # em empate o destino vence
 #
 # Precisa de --resync: 1a vez, depois de formatar, ou depois de mexer no filtro.
 #
 # Depois de formatar a maquina:
 #   1) instale o rclone pelo Omarchy e recrie o remote: rclone config
-#   2) clone o repo privado em ~/Projects/backup e restaure os arquivos pessoais
-#      pelo remote configurado conforme necessario.
-#   3) ~/Projects/backup/backup_multiplo.sh --resync-from-remote
-#   4) dai em diante e so ./backup_multiplo.sh (ou o timer systemd)
+#   2) clone este projeto e restaure os arquivos pessoais pelo remote configurado
+#      conforme necessario.
+#   3) omarchy-backup --resync-from-remote
+#   4) dai em diante e so omarchy-backup (ou o timer systemd)
 #
 set -euo pipefail
 umask 077
@@ -70,7 +65,7 @@ SAFE_CONFIG_PATHS=(
     fontconfig imv btop fastfetch nvim tmux starship.toml
     mimeapps.list user-dirs.dirs user-dirs.locale
     gtk-3.0/settings.ini gtk-4.0/settings.ini
-    systemd/user/backup-multiplo.service systemd/user/backup-multiplo.timer
+    systemd/user/omarchy-backup.service systemd/user/omarchy-backup.timer
 )
 
 # Syncs sao migrados/carregados de SYNC_CONFIG_FILE. Este array so existe como
@@ -406,14 +401,18 @@ emit_status_json() {
     local jobs_json='[]' history_json='[]' timer_state="unknown"
 
     if [[ -s "$STATUS_FILE" ]]; then
-        jobs_json="$(jq -Rn '[inputs | split("\t") | select(length >= 6) |
+        jobs_json="$(jq -Rn '[inputs | split("\t") | select(length >= 6 and (.[0] | test("^[0-9]+$"))) |
           if length >= 7 then {
             epoch:(.[0]|tonumber), time:.[1], id:.[2], destination:.[3], mode:.[4],
             result:.[5], durationSeconds:(.[6]|tonumber)
-          } else {
+          }
+          elif (.[4] == "bisync" or .[4] == "sync" or .[4] == "copy") then {
+            epoch:(.[0]|tonumber), time:.[1], id:.[2], destination:.[3], mode:.[4],
+            result:.[5], durationSeconds:null
+          } elif (.[5] | test("^[0-9]+$")) then {
             epoch:(.[0]|tonumber), time:.[1], destination:.[2], mode:.[3],
             result:.[4], durationSeconds:(.[5]|tonumber)
-          } end]' < "$STATUS_FILE")"
+          } else empty end]' < "$STATUS_FILE")"
     fi
     local syncs_json='[]' configured_syncs snapshot_target='null' snapshot_options='{"omarchy":true,"favorites":true}' baselines_json='[]' id source destination mode ready marker
     configured_syncs="$(jq -c '.jobs' "$SYNC_CONFIG_FILE" 2>/dev/null || echo '[]')"
@@ -439,7 +438,7 @@ emit_status_json() {
         }]' < "$HISTORY_FILE")"
     fi
     if command -v systemctl >/dev/null 2>&1; then
-        timer_state="$(systemctl --user is-active backup-multiplo.timer 2>/dev/null || true)"
+        timer_state="$(systemctl --user is-active omarchy-backup.timer 2>/dev/null || true)"
         case "$timer_state" in
             active|inactive|failed|activating|deactivating|maintenance|reloading) ;;
             *) timer_state="unknown" ;;
@@ -472,7 +471,7 @@ record_history() {
     mv -f -- "$tmp" "$HISTORY_FILE"
 }
 
-# ./backup_multiplo.sh status [--brief]
+# omarchy-backup status [--brief]
 #   sem --brief: resumo completo da ultima rodada (offline, so le $STATE_DIR)
 #   --brief    : 1 linha colorida p/ inicio de shell
 cmd_status() {
@@ -496,8 +495,8 @@ cmd_status() {
             emit_status_json never 0 "" 0 0 "$FAVORITES_STATE" "$FAVORITES_AGE" "$CONFIG_STATE" ""
             return 0
         fi
-        if (( brief )); then echo "${Y}● backup: nunca rodou${N} ${B}— rode: backup_multiplo.sh --resync${N}"
-        else echo "backup_multiplo: nunca rodou. Rode:  $0 --resync"; fi
+        if (( brief )); then echo "${Y}● backup: nunca rodou${N} ${B}— rode: omarchy-backup --resync${N}"
+        else echo "omarchy-backup: nunca rodou. Rode: omarchy-backup --resync"; fi
         return 0
     fi
 
@@ -541,7 +540,7 @@ cmd_status() {
         if [[ "$overall" == "ok" ]] && (( ! stale )); then
             echo "${G}● backup: ok${N} ${B}· $idade${N}"
         elif [[ "$overall" == "ok" ]] && (( stale )); then
-            echo "${Y}● backup: ok mas $idade${N} ${B}· timer parado? systemctl --user status backup-multiplo.timer${N}"
+            echo "${Y}● backup: ok mas $idade${N} ${B}· timer parado? systemctl --user status omarchy-backup.timer${N}"
         else
             echo "${R}● backup: FALHOU${N} ${B}· $idade · $nfail/$njobs job(s) · ~/logs/backup${N}"
         fi
@@ -551,14 +550,18 @@ cmd_status() {
     # modo completo
     local head_c="$G"; [[ "$overall" != "ok" ]] && head_c="$R"
     (( stale )) && [[ "$overall" == "ok" ]] && head_c="$Y"
-    echo "${head_c}backup_multiplo — ultima rodada $idade${N} (${iso})"
+    echo "${head_c}omarchy-backup — ultima rodada $idade${N} (${iso})"
     (( stale )) && echo "${Y}  ! passou de ${STALE_HOURS}h desde a ultima rodada${N}"
     if [[ -f "$STATUS_FILE" ]]; then
         local jepoch jiso jid jdest jmode jres jdur mark
         while IFS=$'\t' read -r -a status_row; do
+            (( ${#status_row[@]} >= 6 )) || continue
             if (( ${#status_row[@]} >= 7 )); then
                 jepoch="${status_row[0]}"; jiso="${status_row[1]}"; jid="${status_row[2]}"
                 jdest="${status_row[3]}"; jmode="${status_row[4]}"; jres="${status_row[5]}"; jdur="${status_row[6]}"
+            elif [[ "${status_row[4]}" == "bisync" || "${status_row[4]}" == "sync" || "${status_row[4]}" == "copy" ]]; then
+                jepoch="${status_row[0]}"; jiso="${status_row[1]}"; jid="${status_row[2]}"
+                jdest="${status_row[3]}"; jmode="${status_row[4]}"; jres="${status_row[5]}"; jdur="?"
             else
                 jepoch="${status_row[0]}"; jiso="${status_row[1]}"; jid=""
                 jdest="${status_row[2]}"; jmode="${status_row[3]}"; jres="${status_row[4]}"; jdur="${status_row[5]}"
@@ -594,39 +597,39 @@ syncs_command() {
     shift || true
     case "$action" in
         list)
-            [[ "${1:-}" == "--json" ]] || { echo 'uso: backup_multiplo syncs list --json' >&2; return 2; }
+            [[ "${1:-}" == "--json" ]] || { echo 'uso: omarchy-backup syncs list --json' >&2; return 2; }
             sync_config_list_json
             ;;
         remotes)
-            [[ "${1:-}" == "--json" ]] || { echo 'uso: backup_multiplo syncs remotes --json' >&2; return 2; }
+            [[ "${1:-}" == "--json" ]] || { echo 'uso: omarchy-backup syncs remotes --json' >&2; return 2; }
             local remotes_json
             remotes_json="$(sync_remote_list_json)" || return $?
             jq -cn --argjson remotes "$remotes_json" '{remotes:$remotes}'
             ;;
         upsert)
-            [[ "${1:-}" == "--json" && -n "${2:-}" ]] || { echo 'uso: backup_multiplo syncs upsert --json JOB' >&2; return 2; }
+            [[ "${1:-}" == "--json" && -n "${2:-}" ]] || { echo 'uso: omarchy-backup syncs upsert --json JOB' >&2; return 2; }
             sync_config_upsert "$2" && printf '{"ok":true}\n'
             ;;
         set-enabled)
-            [[ -n "${1:-}" && -n "${2:-}" ]] || { echo 'uso: backup_multiplo syncs set-enabled ID 0|1' >&2; return 2; }
+            [[ -n "${1:-}" && -n "${2:-}" ]] || { echo 'uso: omarchy-backup syncs set-enabled ID 0|1' >&2; return 2; }
             sync_config_set_enabled "$1" "$2" && printf '{"ok":true}\n'
             ;;
         remove)
-            [[ -n "${1:-}" ]] || { echo 'uso: backup_multiplo syncs remove ID' >&2; return 2; }
+            [[ -n "${1:-}" ]] || { echo 'uso: omarchy-backup syncs remove ID' >&2; return 2; }
             sync_config_remove "$1" && printf '{"ok":true}\n'
             ;;
         snapshot-target)
-            [[ "${1:-}" == "--json" && -n "${2:-}" ]] || { echo 'uso: backup_multiplo syncs snapshot-target --json {"syncId":"...","path":"..."}' >&2; return 2; }
+            [[ "${1:-}" == "--json" && -n "${2:-}" ]] || { echo 'uso: omarchy-backup syncs snapshot-target --json {"syncId":"...","path":"..."}' >&2; return 2; }
             local target_id target_path
             target_id="$(jq -r '.syncId // empty' <<< "$2")"
             target_path="$(jq -r '.path // empty' <<< "$2")"
             sync_config_set_snapshot_target "$target_id" "$target_path" && printf '{"ok":true}\n'
             ;;
         snapshot-options)
-            [[ "${1:-}" == "--json" && -n "${2:-}" ]] || { echo 'uso: backup_multiplo syncs snapshot-options --json {"omarchy":true,"favorites":true}' >&2; return 2; }
+            [[ "${1:-}" == "--json" && -n "${2:-}" ]] || { echo 'uso: omarchy-backup syncs snapshot-options --json {"omarchy":true,"favorites":true}' >&2; return 2; }
             sync_config_set_snapshot_options "$2" && printf '{"ok":true}\n'
             ;;
-        *) echo 'uso: backup_multiplo syncs {list|remotes|upsert|set-enabled|remove|snapshot-target|snapshot-options|run}' >&2; return 2 ;;
+        *) echo 'uso: omarchy-backup syncs {list|remotes|upsert|set-enabled|remove|snapshot-target|snapshot-options|run}' >&2; return 2 ;;
     esac
 }
 
@@ -725,8 +728,8 @@ snapshot_config() {
     # Defesa adicional: um segredo escrito por engano numa configuracao segura
     # cancela a rodada antes que o arquivo seja empacotado ou enviado.
     local suspect
-    suspect="$(grep -RIlE \
-        '(api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|private[_-]?key)[[:space:]]*[:=]' \
+    suspect="$(grep -RIlEi \
+        '(^|[^[:alnum:]])(api[_-]?key|apikey|access[_-]?token|auth[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|secret([_-]?(key|access[_-]?key))?|password|passwd|private[_-]?key|credentials?|aws[_-]?secret[_-]?access[_-]?key)"?[[:space:]]*[:=][[:space:]]*[^[:space:]]' \
         "$stage/config" 2>/dev/null || true)"
     if [[ -n "$suspect" ]]; then
         echo "omarchy: possivel segredo detectado; snapshot cancelado:" >&2
@@ -788,12 +791,34 @@ sanitize_favorites_json() {
     local file="$1" tmp="${1}.safe"
     jq '
       def safeurl:
-        sub("^(?<scheme>https?://)[^/@]+@"; "\(.scheme)")
-        | gsub("(?<sep>[?&])(?<key>(?i:access_token|refresh_token|token|api_key|apikey|auth|signature|sig|password|passwd|secret))=[^&#]*";
+        sub("^(?<scheme>[A-Za-z][A-Za-z0-9+.-]*://)[^/@]+@"; "\(.scheme)")
+        | gsub("(?<sep>[?&#])(?<key>(?i:access_token|refresh_token|id_token|token|api[_-]?key|auth|signature|sig|password|passwd|client_secret|secret))=[^&#]*";
                "\(.sep)\(.key)=REDACTED");
       walk(if type == "object" and has("url") and (.url | type) == "string"
            then .url |= safeurl else . end)
     ' "$file" > "$tmp" && mv -f "$tmp" "$file"
+}
+
+sanitize_favorites_url() {
+    local url="$1"
+    jq -nr --arg url "$url" '
+      $url
+      | sub("^(?<scheme>[A-Za-z][A-Za-z0-9+.-]*://)[^/@]+@"; "\\(.scheme)")
+      | gsub("(?<sep>[?&#])(?<key>(?i:access_token|refresh_token|id_token|token|api[_-]?key|auth|signature|sig|password|passwd|client_secret|secret))=[^&#]*";
+             "\\(.sep)\\(.key)=REDACTED")
+    '
+}
+
+sanitize_gtk_bookmarks() {
+    local source="$1" destination="$2" line uri label safe_uri
+    : > "$destination"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -n "$line" ]] || { printf '\n' >> "$destination"; continue; }
+        uri="${line%%[[:space:]]*}"
+        label="${line#"$uri"}"
+        safe_uri="$(sanitize_favorites_url "$uri")" || return 1
+        printf '%s%s\n' "$safe_uri" "$label" >> "$destination"
+    done < "$source"
 }
 
 snapshot_favorites() {
@@ -827,7 +852,14 @@ snapshot_favorites() {
             safe_name="${profile//[^a-zA-Z0-9._-]/_}"
             mkdir -p "$stage/favorites/$browser"
             out="$stage/favorites/$browser/$safe_name.json"
-            if jq '
+            if ! jq empty "$bookmark" >/dev/null; then
+                rm -f "$out"
+                echo "favoritos: JSON invalido em $browser/$profile" >&2
+                failed=$(( failed + 1 ))
+            elif ! jq -e '[.. | objects | select(.type? == "url")] | length > 0' \
+                "$bookmark" >/dev/null; then
+                rm -f "$out"
+            elif jq '
                 def clean:
                   if .type? == "url" then
                     {type:"url", name:(.name // ""), url:(.url // "")}
@@ -859,9 +891,18 @@ snapshot_favorites() {
         mkdir -p "$stage/favorites/firefox"
         out="$stage/favorites/firefox/$safe_name.json"
         if sqlite3 -json "file:$db?immutable=1" "$query" \
-                | jq '{format:"firefox-bookmarks-v1", items:.}' > "$out" \
-            && sanitize_favorites_json "$out"; then
-            exported=$(( exported + 1 ))
+                | jq '{format:"firefox-bookmarks-v1", items:.}' > "$out"; then
+            if jq -e 'any(.items[]; .type == 1 and .url != null)' "$out" >/dev/null; then
+                if sanitize_favorites_json "$out"; then
+                    exported=$(( exported + 1 ))
+                else
+                    rm -f "$out"
+                    echo "favoritos: nao foi possivel sanitizar Firefox/$profile" >&2
+                    failed=$(( failed + 1 ))
+                fi
+            else
+                rm -f "$out"
+            fi
         else
             rm -f "$out"
             echo "favoritos: nao foi possivel exportar Firefox/$profile" >&2
@@ -871,8 +912,14 @@ snapshot_favorites() {
 
     if [[ -s "$CONFIG_ROOT/gtk-3.0/bookmarks" ]]; then
         mkdir -p "$stage/favorites/gtk"
-        cp -- "$CONFIG_ROOT/gtk-3.0/bookmarks" "$stage/favorites/gtk/bookmarks.txt"
-        exported=$(( exported + 1 ))
+        if sanitize_gtk_bookmarks "$CONFIG_ROOT/gtk-3.0/bookmarks" \
+            "$stage/favorites/gtk/bookmarks.txt"; then
+            exported=$(( exported + 1 ))
+        else
+            rm -rf -- "$stage"; rm -f "$tmp"
+            echo "favoritos: nao foi possivel sanitizar os favoritos GTK" >&2
+            return 1
+        fi
     fi
     if (( failed > 0 )); then
         rm -rf -- "$stage"; rm -f "$tmp"
@@ -881,8 +928,8 @@ snapshot_favorites() {
     fi
     if (( exported == 0 )); then
         rm -rf -- "$stage"; rm -f "$tmp"
-        echo "favoritos: nenhum favorito encontrado" >&2
-        return 1
+        echo "favoritos: nenhum favorito atual; snapshot anterior preservado"
+        return 0
     fi
     tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
         --zstd -cf "$tmp" -C "$stage" favorites
@@ -984,7 +1031,7 @@ notify_backup_failure() {
     local count="${1:-1}" total="${2:-1}" detail="${3:-Consulte os logs.}"
     [[ "$NOTIFY_FAILURE" == "1" ]] || return 0
     command -v omarchy-notification-send >/dev/null 2>&1 || return 0
-    omarchy-notification-send --app-name backup-multiplo -u critical -g "\uf071" \
+    omarchy-notification-send --app-name omarchy-backup -u critical -g "\uf071" \
         "Falha no Omarchy Backup" \
         "$count de $total tarefa(s) falharam. $detail" \
         --exec xdg-open "$LOG_DIR" >/dev/null 2>&1 || true
@@ -1050,6 +1097,7 @@ rodar_rclone() {
     local log_file="$1"; shift
     local inicio ec dur tentativa=1 espera="$RCLONE_BACKOFF" log_start=0
     while : ; do
+        [[ -e "$log_file" ]] || : > "$log_file"
         log_start="$(wc -l < "$log_file" 2>/dev/null || echo 0)"
         inicio=$SECONDS
         set +e
@@ -1103,13 +1151,9 @@ verify_other_snapshots() {
 
 verify_backup() {
     local log_file="$LOG_DIR/verificacao_$(date '+%Y-%m-%d_%H-%M-%S').log"
-    local -a args=(rclone check "$PERSONAL_DIR" "$FILEN_REMOTE:personal"
-        --filter-from "$SCRIPT_DIR/rclone-filter.txt"
-        --checkers 8 --timeout 300s --contimeout 120s
-        --combined "$STATE_DIR/verify-combined.txt")
-    (( VERIFY_DOWNLOAD )) && args+=(--download)
-
-    local snapshots_checked=0
+    local snapshots_checked=0 index id source destination excludes filter_path filter_tmp
+    local combined failed=0 enabled=0 pattern
+    local -a args=()
     if [[ "$SNAPSHOT_FAVORITES_ENABLED" == true ]]; then
         verify_favorites_restore || { echo "verificacao: snapshot de favoritos ausente ou invalido" >&2; return 1; }
         snapshots_checked=1
@@ -1119,25 +1163,50 @@ verify_backup() {
         snapshots_checked=1
     fi
     if (( snapshots_checked )); then echo "verificacao: snapshots locais ativos estao integros"
-    else echo "verificacao: snapshots locais desativados; validando somente o sync"; fi
-    if (( VERIFY_DOWNLOAD )); then
-        echo "verificacao: comparando local com Filen (download completo)"
-    else
-        echo "verificacao: comparando metadados locais com o Filen"
-    fi
-    local saved_attempts="$RCLONE_TENTATIVAS"
-    RCLONE_TENTATIVAS=1
-    rodar_rclone "$log_file" "${args[@]}" || {
-        RCLONE_TENTATIVAS="$saved_attempts"
-        echo "verificacao: diferencas encontradas; veja $STATE_DIR/verify-combined.txt" >&2
-        return 1
-    }
-    RCLONE_TENTATIVAS="$saved_attempts"
-    if grep -Eq '^[+*?!-]' "$STATE_DIR/verify-combined.txt" 2>/dev/null; then
-        echo "verificacao: relatorio contem diferencas" >&2
-        return 1
-    fi
-    echo "verificacao: local, Filen e snapshots estao integros"
+    else echo "verificacao: snapshots locais desativados"; fi
+    (( VERIFY_DOWNLOAD )) && echo "verificacao: comparando conteudo completo" \
+        || echo "verificacao: comparando metadados"
+
+    for index in "${!JOB_IDS[@]}"; do
+        (( JOB_ENABLED[index] == 1 )) || continue
+        enabled=$((enabled + 1))
+        id="${JOB_IDS[index]}"; source="${JOB_SOURCES[index]}"
+        destination="${JOB_DESTINATIONS[index]}"; excludes="${JOB_EXCLUDES_JSON[index]}"
+        filter_path="$STATE_DIR/filters/$id.filters"
+        install -d -m 700 -- "$(dirname -- "$filter_path")"
+        filter_tmp="$(mktemp "$(dirname -- "$filter_path")/.${id}.XXXXXX")"
+        cat -- "$SCRIPT_DIR/rclone-filter.txt" > "$filter_tmp" || {
+            rm -f -- "$filter_tmp"; return 1;
+        }
+        while IFS= read -r pattern; do
+            pattern="$(strip "$pattern")"
+            [[ -n "$pattern" ]] && printf '\n- %s\n' "$pattern" >> "$filter_tmp"
+        done < <(jq -r '.[]' <<< "$excludes")
+        chmod 600 -- "$filter_tmp"
+        mv -f -- "$filter_tmp" "$filter_path"
+        combined="$STATE_DIR/verify-$id.txt"
+        log_file="$LOG_DIR/verificacao_${id}_$(date '+%Y-%m-%d_%H-%M-%S').log"
+        args=(rclone check "$source" "$destination"
+            --filter-from "$filter_path" --checkers 8 --timeout 300s --contimeout 120s
+            --combined "$combined")
+        (( VERIFY_DOWNLOAD )) && args+=(--download)
+        echo "verificacao: [$id] $source -> $destination"
+        RCLONE_TENTATIVAS=1
+        if ! rodar_rclone "$log_file" "${args[@]}"; then
+            echo "verificacao: [$id] falhou; consulte $combined e $log_file" >&2
+            failed=1
+            continue
+        fi
+        if grep -Eq '^[+*?!-]' "$combined" 2>/dev/null; then
+            echo "verificacao: [$id] relatorio contem diferencas: $combined" >&2
+            failed=1
+        else
+            echo "verificacao: [$id] integro"
+        fi
+    done
+    (( enabled > 0 )) || echo "verificacao: nenhum sync ativo configurado"
+    (( failed == 0 )) || return 1
+    echo "verificacao: jobs ativos e snapshots estao integros"
 }
 
 if [[ "$COMMAND" == "verify" ]]; then
@@ -1184,7 +1253,7 @@ fazer_backup() {
             ;;
         copy)
             args=(rclone copy "$origem" "$destino" "${COMMON_FLAGS[@]}"
-                  --backup-dir "$archive_remote" --filter-from "$filter_path" "${DRY_RUN[@]}")
+                  --filter-from "$filter_path" "${DRY_RUN[@]}")
             rodar_rclone "$log_file" "${args[@]}"; rc=$?
             ;;
         bisync)
@@ -1218,7 +1287,7 @@ fazer_backup() {
 }
 
 # --------------------------------------------------------------- main --------
-echo "=== BACKUP MULTIPLO ${DRY_RUN:+(DRY-RUN) }$( ((RESYNC)) && echo "(RESYNC $RESYNC_MODE) ")==="
+echo "=== OMARCHY BACKUP ${DRY_RUN:+(DRY-RUN) }$( ((RESYNC)) && echo "(RESYNC $RESYNC_MODE) ")==="
 
 # grava estado so em rodada real (nao em --dry-run/verify/snapshot)
 (( RECORD )) && : > "$STATUS_FILE"
@@ -1246,7 +1315,7 @@ for index in "${!JOB_IDS[@]}"; do
         res=FALHOU; echo "     FALHOU (ver $LOG_DIR/${j_id}_$(date '+%Y-%m-%d').log)"
         falhas=$(( falhas + 1 ))
     fi
-    (( RECORD )) && printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    (( RECORD )) && printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$(date +%s)" "$(date '+%F %T')" "$j_id" "$j_destino" "$j_modo" "$res" "$(( SECONDS - t0 ))" >> "$STATUS_FILE"
 done
 

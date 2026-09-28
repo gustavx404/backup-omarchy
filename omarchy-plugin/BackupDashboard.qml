@@ -303,7 +303,7 @@ Panel {
       managerMessage = "Executando “" + String(args[1] || "sync") + "”…"
       backupState = "running"
     }
-    commandProcess.command = [Quickshell.env("HOME") + "/.local/bin/backup_multiplo"].concat(args)
+    commandProcess.command = [Quickshell.env("HOME") + "/.local/bin/omarchy-backup"].concat(args)
     commandProcess.running = true
   }
 
@@ -389,7 +389,7 @@ Panel {
 
   function runBackup() {
     if (backupState === "running") return
-    Quickshell.execDetached(["systemctl", "--user", "start", "backup-multiplo.service"])
+    Quickshell.execDetached(["systemctl", "--user", "start", "omarchy-backup.service"])
     backupState = "running"
     refreshSoon.restart()
   }
@@ -405,7 +405,7 @@ Panel {
     if (!pendingResyncMode) return
     var argument = pendingResyncMode === "newer" ? "--resync" : "--resync-from-" + pendingResyncMode
     confirmResync.opened = false
-    Quickshell.execDetached([Quickshell.env("HOME") + "/.local/bin/backup_multiplo", argument])
+    Quickshell.execDetached([Quickshell.env("HOME") + "/.local/bin/omarchy-backup", argument])
     backupState = "running"
     refreshSoon.restart()
   }
@@ -438,7 +438,7 @@ Panel {
 
   Process {
     id: remoteProcess
-    command: [Quickshell.env("HOME") + "/.local/bin/backup_multiplo", "syncs", "remotes", "--json"]
+    command: [Quickshell.env("HOME") + "/.local/bin/omarchy-backup", "syncs", "remotes", "--json"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -488,7 +488,7 @@ Panel {
 
   Process {
     id: statusProcess
-    command: [Quickshell.env("HOME") + "/.local/bin/backup_multiplo", "status", "--json"]
+    command: [Quickshell.env("HOME") + "/.local/bin/omarchy-backup", "status", "--json"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
