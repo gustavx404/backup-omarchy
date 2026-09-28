@@ -1,0 +1,10 @@
+*.log
+logs/
+*.lock
+.backup_multiplo_ok
+*.md5
+.env
+.env.*
+!.env.example
+*.pem
+*.key

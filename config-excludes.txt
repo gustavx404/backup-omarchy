@@ -1,0 +1,23 @@
+# Aplicado somente dentro da lista positiva SAFE_CONFIG_PATHS. Remove artefatos
+# recriaveis que possam existir em configuracoes portateis.
+**/Cache/
+**/Code Cache/
+**/GPUCache/
+**/DawnCache/
+**/blob_storage/
+**/Crash Reports/
+**/ShaderCache/
+**/GrShaderCache/
+**/GraphiteDawnCache/
+**/GPUPersistentCache/
+**/SingletonLock
+**/SingletonCookie
+**/SingletonSocket
+**/*.tmp
+**/*.temp
+**/*.part
+**/*.lock
+**/*-journal
+**/*.log
+**/.DS_Store
+**/Thumbs.db

@@ -1,0 +1,81 @@
+# Filtro global aplicado a todos os jobs do Omarchy Backup.
+# Formato de FILTRO do rclone: "- padrao" = excluir. O que nao casar e incluido.
+# Usado como --filters-file no bisync e --filter-from nos jobs copy (oracle/b2).
+#
+# MOTIVO PRINCIPAL DO TRAVAMENTO ANTIGO:
+#   ~/personal/Ollama tinha 2667 diretorios (llama.cpp/build, build-rocm,
+#   node_modules, __pycache__) e NENHUM arquivo util. O rclone andava por toda
+#   essa arvore no Filen (~5 itens/s no backend criptografado) e estourava o
+#   timeout. Fora do backup, roda em segundos.
+
+# arvore de build / codigo que nao e "pessoal"
+- /Ollama/**
+
+# Snapshots antigos de perfis completos continham sessoes e credenciais.
+# Eles ficam bloqueados mesmo se ainda existirem localmente.
+- /Backups/Chromium/**
+- /Backups/Firefox/**
+- /Firefox/**
+
+# Cofre local: chaves, tokens e credenciais nunca saem desta maquina.
+- /Vault/**
+
+# Bloqueios globais para fontes adicionais configuradas pelo painel.
+- **/.ssh/**
+- **/.gnupg/**
+- **/.aws/**
+- **/.azure/**
+- **/.kube/**
+- **/.config/rclone/**
+- **/.config/**/rclone/**
+- **/.local/share/backup-multiplo/archive/**
+- **/rclone.conf
+- **/.docker/config.json
+- **/.netrc
+- **/.npmrc
+- **/.pypirc
+- **/.env*
+- **/id_rsa
+- **/id_rsa.*
+- **/id_ed25519
+- **/id_ed25519.*
+- **/*.pem
+- **/*.key
+- **/.mozilla/firefox/**
+- **/Backups/Chromium/**
+- **/Backups/Firefox/**
+- **/.config/chromium/**
+- **/.config/google-chrome*/**
+- **/.config/BraveSoftware/**
+- **/.config/vivaldi/**
+
+# Estado tecnico criado pelo rclone bisync. E necessario localmente, mas nao
+# precisa ser enviado nem restaurado em outra maquina.
+- /backup/rclone-filter.txt.md5
+
+# lixo de build / dependencias / cache / controle de versao
+- **/.git/**
+- **/node_modules/**
+- **/__pycache__/**
+- **/.svn/**
+- **/.hg/**
+- **/.cache/**
+- **/.venv/**
+- **/venv/**
+- **/build/**
+- **/build-*/**
+- **/dist/**
+- **/target/**
+- **/.next/**
+- **/.gradle/**
+- **/CMakeFiles/**
+
+# temporarios / do sistema
+- **/*.tmp
+- **/*.temp
+- **/*.part
+- **/*.swp
+- **/*~
+- **/.DS_Store
+- **/Thumbs.db
+- **/desktop.ini

@@ -1,0 +1,14 @@
+[Unit]
+Description=Backup pessoal, Omarchy seguro e favoritos a cada 2h
+Documentation=file:%h/Projects/backup/README.md
+
+[Timer]
+# Primeira corrida depois que a rede e a sessao assentarem e, depois, nos
+# horarios pares. OnCalendar + Persistent recupera uma rodada perdida desligado.
+OnBootSec=10min
+OnCalendar=*-*-* 00/2:00:00
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
