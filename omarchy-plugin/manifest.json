@@ -4,14 +4,14 @@
   "name": "Omarchy Backup",
   "version": "1.2.0",
   "author": "Local",
-  "description": "Painel de backup seguro com gerenciamento dinamico de sincronizacoes",
+  "description": "Painel Omarchy para backups e sincronizacoes gerenciadas pelo rclone",
   "kinds": ["bar-widget"],
   "entryPoints": {
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
     "displayName": "Backup Omarchy",
-    "description": "Resumo do backup com gerenciamento de syncs e recuperacao guiada",
+    "description": "Painel de backups, sincronizacoes e recuperacao no Omarchy",
     "category": "System",
     "allowMultiple": false
   }

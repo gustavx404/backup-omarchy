@@ -26,8 +26,8 @@ rclone config
 Clone este repositório e execute o instalador:
 
 ```bash
-git clone https://github.com/gustavx404/omarchy-backup-plugin.git ~/Projects/omarchy-backup-plugin
-cd ~/Projects/omarchy-backup-plugin
+git clone https://github.com/gustavx404/backup-omarchy.git ~/Projects/backup-omarchy
+cd ~/Projects/backup-omarchy
 ./install.sh
 ```
 
