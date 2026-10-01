@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-SCRIPT="$ROOT/src/omarchy-backup.sh"
+SCRIPT="$ROOT/src/omarchy-backup"
 ORIGINAL_PATH="$PATH"
 SANDBOX=""
 TESTS=0
@@ -36,6 +36,9 @@ new_sandbox() {
     export BACKUP_SYNC_CONFIG="$HOME/.config/backup-multiplo/syncs.json"
     export BACKUP_NOTIFY_FAILURE=0
     export BACKUP_TEST_RCLONE_LOG="$HOME/rclone-calls.log"
+    export BACKUP_TEST_RCLONE_ARGS_LOG="$HOME/rclone-args.log"
+    export RCLONE_BACKOFF=0
+    export RCLONE_TENTATIVAS=1
     export PATH="$SANDBOX/bin:$ORIGINAL_PATH"
     mkdir -p "$HOME" "$SANDBOX/bin" "$BACKUP_CONFIG_ROOT" "$BACKUP_PERSONAL_DIR" "$HOME/source"
 
@@ -43,6 +46,8 @@ new_sandbox() {
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$BACKUP_TEST_RCLONE_LOG"
+    printf '<%q> ' "$@" >> "$BACKUP_TEST_RCLONE_ARGS_LOG"
+    printf '\n' >> "$BACKUP_TEST_RCLONE_ARGS_LOG"
 if [[ "${1:-}" == --ask-password=false ]]; then shift; fi
 original=("$@")
 while (($#)); do
@@ -57,7 +62,7 @@ set -- "${original[@]}"
 case "${1:-}" in
     listremotes)
         if [[ " $* " == *" --json "* ]]; then
-            printf '[{"name":"Mock","type":"local"}]\n'
+            printf '[{"name":"Mock","type":"local","description":"private fixture","token":"must-not-leak"}]\n'
         else
             printf 'Mock:\n'
         fi
@@ -74,7 +79,7 @@ case "${1:-}" in
         done
         [[ -z "$combined" ]] || printf '= fixture\n' > "$combined"
         ;;
-    copy|sync|bisync)
+    copy|sync|bisync|touch)
         ;;
     *)
         printf 'unexpected mocked rclone command: %s\n' "$*" >&2
@@ -112,6 +117,33 @@ test_status_parser_keeps_configured_sync() {
     pass 'status JSON retains configured syncs and recent results'
 }
 
+test_status_orders_pending_and_stale_states_consistently() {
+    new_sandbox
+    write_config copy '{"omarchy":false,"favorites":true}'
+    mkdir -p "$BACKUP_FAVORITES_DEST"
+    mkdir -p "$BACKUP_STATE_DIR"
+    printf 'fixture archive marker\n' > "$BACKUP_FAVORITES_DEST/favoritos-latest.tar.zst"
+    now="$(date +%s)"
+    run_epoch=$((now - 3600))
+    printf '%s\t%s\tok\t0\t0\t\n' "$run_epoch" "$(date -d "@$run_epoch" '+%F %T')" \
+        > "$BACKUP_STATE_DIR/last-run"
+    result="$("$SCRIPT" status --json)" || fail 'status calculation failed'
+    jq -e '.favoritesState == "pending" and .state == "warning"' <<< "$result" >/dev/null \
+        || fail 'a newer local snapshot was not reported as pending'
+
+    new_sandbox
+    write_config copy '{"omarchy":false,"favorites":false}'
+    export BACKUP_STALE_HOURS=0
+    mkdir -p "$BACKUP_STATE_DIR"
+    run_epoch="$(date +%s)"
+    printf '%s\t%s\tok\t0\t0\t\n' "$run_epoch" "$(date -d "@$run_epoch" '+%F %T')" \
+        > "$BACKUP_STATE_DIR/last-run"
+    result="$("$SCRIPT" status --json)" || fail 'stale status calculation failed'
+    jq -e '.state == "stale"' <<< "$result" >/dev/null \
+        || fail 'a stale backup state was overwritten by snapshot warnings'
+    pass 'status preserves pending-snapshot and stale-state precedence'
+}
+
 test_verify_checks_jobs_without_syncing() {
     new_sandbox
     write_config
@@ -122,6 +154,8 @@ test_verify_checks_jobs_without_syncing() {
         fail 'verify emitted a missing-log warning on a clean run'
     fi
     grep -q '^check ' "$BACKUP_TEST_RCLONE_LOG" || fail 'verify did not use rclone check'
+    grep '^check ' "$BACKUP_TEST_RCLONE_LOG" | grep -q -- '--disable-http2' \
+        || fail 'verify did not disable HTTP/2 for stable remote metadata checks'
     if grep -Eq '^(sync|bisync|copy) ' "$BACKUP_TEST_RCLONE_LOG"; then
         fail 'verify invoked a write-capable rclone operation'
     fi
@@ -138,6 +172,44 @@ test_copy_does_not_receive_backup_dir() {
         fail 'copy mode received unsupported --backup-dir'
     fi
     pass 'copy mode omits the unsupported archive flag'
+}
+
+test_sync_mode_keeps_delete_limit_and_archive() {
+    new_sandbox
+    write_config sync
+
+    "$SCRIPT" syncs run fixture-job >/dev/null || fail 'mocked sync job failed'
+    grep -q '^sync ' "$BACKUP_TEST_RCLONE_LOG" || fail 'sync mode was not invoked'
+    grep '<sync>' "$BACKUP_TEST_RCLONE_ARGS_LOG" | grep -q '<--max-delete> <50>' \
+        || fail 'sync mode lost its deletion limit'
+    grep '<sync>' "$BACKUP_TEST_RCLONE_ARGS_LOG" | grep -q '<--backup-dir>' \
+        || fail 'sync mode lost its archive directory'
+    pass 'sync mode keeps the deletion limit and archive directory'
+}
+
+test_disabled_sync_is_not_executed() {
+    new_sandbox
+    write_config copy
+    jq '.jobs[0].enabled = false' "$BACKUP_SYNC_CONFIG" > "$BACKUP_SYNC_CONFIG.tmp"
+    mv "$BACKUP_SYNC_CONFIG.tmp" "$BACKUP_SYNC_CONFIG"
+
+    "$SCRIPT" >/dev/null || fail 'run failed with all syncs disabled'
+    if [[ -f "$BACKUP_TEST_RCLONE_LOG" ]] \
+        && grep -Eq '^(copy|sync|bisync) ' "$BACKUP_TEST_RCLONE_LOG"; then
+        fail 'a disabled sync was executed'
+    fi
+    pass 'disabled syncs are skipped by the scheduled runner'
+}
+
+test_global_resync_mode_reaches_bisync() {
+    new_sandbox
+    write_config bisync
+
+    "$SCRIPT" --resync-from-pc >/dev/null || fail 'mocked global resync failed'
+    grep '<bisync>' "$BACKUP_TEST_RCLONE_ARGS_LOG" \
+        | grep -q '<--resync-mode> <path1>' \
+        || fail 'global PC-wins resync mode was not passed to rclone'
+    pass 'global resync mode preserves the selected conflict winner'
 }
 
 test_empty_favorites_preserve_previous_snapshot() {
@@ -169,6 +241,58 @@ test_gtk_bookmarks_are_sanitized() {
         fail 'GTK snapshot retained URL credentials or token values'
     fi
     pass 'GTK bookmark snapshots redact URL credentials and tokens'
+}
+
+test_chromium_bookmarks_are_sanitized() {
+    new_sandbox
+    write_config copy '{"omarchy":false,"favorites":true}'
+    mkdir -p "$BACKUP_CONFIG_ROOT/chromium/Default"
+    cat > "$BACKUP_CONFIG_ROOT/chromium/Default/Bookmarks" <<'JSON'
+{"roots":{"bookmark_bar":{"type":"folder","name":"Bar","children":[{"type":"url","name":"Fixture","url":"https://user:password@example.test/?token=fixture-secret"}]}}}
+JSON
+
+    "$SCRIPT" snapshot >/dev/null || fail 'Chromium bookmarks snapshot failed'
+    mkdir -p "$SANDBOX/unpacked"
+    tar --zstd -xOf "$BACKUP_FAVORITES_DEST/favoritos-latest.tar.zst" \
+        favorites/chromium/Default.json > "$SANDBOX/bookmarks.json" \
+        || fail 'Chromium bookmarks were not included in the snapshot'
+    jq -e '.. | objects | select(.type? == "url") | .url | contains("REDACTED")' \
+        "$SANDBOX/bookmarks.json" >/dev/null || fail 'Chromium URL secrets were not redacted'
+    if grep -q 'fixture-secret\|user:password' "$SANDBOX/bookmarks.json"; then
+        fail 'Chromium snapshot retained URL credentials or token values'
+    fi
+    pass 'Chromium bookmark snapshots redact URL credentials and tokens'
+}
+
+test_firefox_bookmarks_use_read_only_sqlite_export() {
+    new_sandbox
+    write_config copy '{"omarchy":false,"favorites":true}'
+    mkdir -p "$BACKUP_CONFIG_ROOT/mozilla/firefox/fixture.default"
+    python3 - "$BACKUP_CONFIG_ROOT/mozilla/firefox/fixture.default/places.sqlite" <<'PY'
+import sqlite3
+import sys
+
+connection = sqlite3.connect(sys.argv[1])
+connection.executescript("""
+CREATE TABLE moz_bookmarks (id INTEGER, parent INTEGER, position INTEGER, type INTEGER, title TEXT, fk INTEGER);
+CREATE TABLE moz_places (id INTEGER, url TEXT);
+INSERT INTO moz_places VALUES (1, 'https://user:password@example.test/?token=fixture-secret');
+INSERT INTO moz_bookmarks VALUES (2, 1, 0, 1, 'Fixture', 1);
+""")
+connection.commit()
+connection.close()
+PY
+
+    "$SCRIPT" snapshot >/dev/null || fail 'Firefox bookmarks snapshot failed'
+    tar --zstd -xOf "$BACKUP_FAVORITES_DEST/favoritos-latest.tar.zst" \
+        favorites/firefox/fixture.default.json > "$SANDBOX/firefox.json" \
+        || fail 'Firefox bookmarks were not included in the snapshot'
+    jq -e '.items[0].url | contains("REDACTED")' "$SANDBOX/firefox.json" >/dev/null \
+        || fail 'Firefox URL secrets were not redacted'
+    if grep -q 'fixture-secret\|user:password' "$SANDBOX/firefox.json"; then
+        fail 'Firefox snapshot retained URL credentials or token values'
+    fi
+    pass 'Firefox favorites use a read-only SQLite export with URL sanitizing'
 }
 
 test_uppercase_secret_blocks_config_snapshot() {
@@ -226,6 +350,10 @@ test_snapshot_target_rejects_traversal() {
         >/dev/null 2>&1; then
         fail 'snapshot target accepted a parent-directory traversal'
     fi
+    if "$SCRIPT" syncs snapshot-target --json '{"syncId":"fixture-job","path":null}' \
+        >/dev/null 2>&1; then
+        fail 'snapshot target accepted a non-string path'
+    fi
     [[ "$(cat "$BACKUP_SYNC_CONFIG")" == "$before" ]] \
         || fail 'invalid snapshot target changed the sync configuration'
     pass 'snapshot target rejects path traversal without changing configuration'
@@ -243,13 +371,134 @@ test_sync_configuration_is_private() {
     pass 'sync configuration writes stay private and preserve job edits'
 }
 
+test_remote_listing_projects_only_safe_fields() {
+    new_sandbox
+    result="$("$SCRIPT" syncs remotes --json)" || fail 'remote listing failed'
+    jq -e '.remotes == [{"name":"Mock","type":"local"}]' <<< "$result" >/dev/null \
+        || fail 'remote listing exposed unexpected attributes'
+    if grep -q 'must-not-leak\|private fixture' <<< "$result"; then
+        fail 'remote listing exposed private provider fields'
+    fi
+    pass 'remote listing exposes only provider name and type'
+}
+
+test_invalid_sync_edit_preserves_existing_config() {
+    new_sandbox
+    write_config
+    before="$(cat "$BACKUP_SYNC_CONFIG")"
+    invalid='{"id":"fixture-job","name":"Fixture","source":"/tmp","destination":"Mock:other","mode":"unknown","enabled":true,"exclude":[]}'
+    if "$SCRIPT" syncs upsert --json "$invalid" >/dev/null 2>&1; then
+        fail 'invalid sync edit was accepted'
+    fi
+    [[ "$(cat "$BACKUP_SYNC_CONFIG")" == "$before" ]] \
+        || fail 'invalid sync edit changed the persisted configuration'
+    pass 'invalid sync edits leave the previous configuration unchanged'
+}
+
+test_boolean_schema_version_is_rejected() {
+    new_sandbox
+    write_config
+    jq '.version = true' "$BACKUP_SYNC_CONFIG" > "$BACKUP_SYNC_CONFIG.invalid"
+    mv "$BACKUP_SYNC_CONFIG.invalid" "$BACKUP_SYNC_CONFIG"
+    if "$SCRIPT" syncs list --json >/dev/null 2>&1; then
+        fail 'boolean true was accepted as configuration version 1'
+    fi
+    pass 'configuration schema requires numeric version 1'
+}
+
+test_config_snapshot_can_be_restored_by_verify() {
+    new_sandbox
+    write_config copy '{"omarchy":true,"favorites":false}'
+    mkdir -p "$BACKUP_CONFIG_ROOT/omarchy" "$BACKUP_CONFIG_ROOT/hypr" \
+        "$BACKUP_CONFIG_ROOT/systemd/user"
+    printf '[Unit]\n' > "$BACKUP_CONFIG_ROOT/systemd/user/omarchy-backup.service"
+    "$SCRIPT" snapshot >/dev/null || fail 'config snapshot generation failed'
+    output="$("$SCRIPT" verify)" || fail 'verify could not restore the generated config snapshot'
+    grep -q 'snapshots locais ativos estao integros' <<< "$output" \
+        || fail 'verify did not confirm the extracted snapshot'
+    pass 'verify extracts and checks active configuration snapshots'
+}
+
+test_bisync_baseline_is_per_job_and_dry_run_is_state_neutral() {
+    new_sandbox
+    write_config bisync
+    "$SCRIPT" syncs run fixture-job --resync --dry-run >/dev/null \
+        || fail 'mocked dry-run baseline failed'
+    [[ ! -e "$BACKUP_STATE_DIR/baselines/fixture-job.init" ]] \
+        || fail 'dry-run created a persistent baseline marker'
+    grep -q -- '<--dry-run>' "$BACKUP_TEST_RCLONE_ARGS_LOG" \
+        || fail 'dry-run flag was not passed to rclone'
+    "$SCRIPT" syncs run fixture-job --resync >/dev/null \
+        || fail 'mocked baseline run failed'
+    [[ -f "$BACKUP_STATE_DIR/baselines/fixture-job.init" ]] \
+        || fail 'baseline marker was not stored under the job ID'
+    pass 'bisync baselines are job-scoped and dry-runs do not create them'
+}
+
+test_python_cli_preserves_unicode_paths_as_one_argument() {
+    new_sandbox
+    source="$HOME/Área Pessoal/資料"
+    mkdir -p "$source"
+    mkdir -p "$(dirname "$BACKUP_SYNC_CONFIG")"
+    jq -n --arg source "$source" \
+        '{version:1,jobs:[{id:"fixture-job",name:"Unicode",source:$source,
+          destination:"Mock:target",mode:"copy",enabled:true,exclude:[]}],
+          snapshotOptions:{omarchy:false,favorites:false}}' > "$BACKUP_SYNC_CONFIG"
+    chmod 600 "$BACKUP_SYNC_CONFIG"
+
+    "$SCRIPT" syncs run fixture-job >/dev/null || fail 'Unicode source path did not run'
+    escaped_source="$(printf '%q' "$source")"
+    grep -Fq "<$escaped_source>" "$BACKUP_TEST_RCLONE_ARGS_LOG" \
+        || fail 'Unicode source path was split or changed before reaching rclone'
+    pass 'Unicode source paths reach rclone as one argument'
+}
+
+test_legacy_shell_path_delegates_to_python_backend() {
+    new_sandbox
+    write_config
+    result="$("$ROOT/src/omarchy-backup.sh" status --json)" \
+        || fail 'legacy shell entry point failed'
+    jq -e '.syncs[0].id == "fixture-job"' <<< "$result" >/dev/null \
+        || fail 'legacy shell entry point did not reach the Python backend'
+    pass 'legacy shell entry point delegates to Python'
+}
+
+test_first_use_migrates_legacy_job_without_running_rclone_sync() {
+    new_sandbox
+    export BACKUP_FILEN_REMOTE=Mock
+    result="$("$SCRIPT" syncs list --json)" || fail 'first-use job listing failed'
+    jq -e 'length == 1 and .[0].id == "personal-filen" and
+        .[0].destination == "Mock:personal" and .[0].mode == "bisync"' \
+        <<< "$result" >/dev/null || fail 'legacy job was not initialized correctly'
+    mode="$(stat -c '%a' "$BACKUP_SYNC_CONFIG")"
+    [[ "$mode" == 600 ]] || fail "initial sync configuration mode is $mode instead of 600"
+    if grep -Eq '^(copy|sync|bisync) ' "$BACKUP_TEST_RCLONE_LOG"; then
+        fail 'first-use initialization ran a sync'
+    fi
+    pass 'first use initializes the legacy job privately without syncing'
+}
+
 test_status_parser_keeps_configured_sync
+test_status_orders_pending_and_stale_states_consistently
 test_verify_checks_jobs_without_syncing
 test_copy_does_not_receive_backup_dir
+test_sync_mode_keeps_delete_limit_and_archive
+test_disabled_sync_is_not_executed
+test_global_resync_mode_reaches_bisync
 test_empty_favorites_preserve_previous_snapshot
 test_gtk_bookmarks_are_sanitized
+test_chromium_bookmarks_are_sanitized
+test_firefox_bookmarks_use_read_only_sqlite_export
 test_uppercase_secret_blocks_config_snapshot
 test_plugin_source_fields_do_not_block_config_snapshot
 test_snapshot_target_rejects_traversal
 test_sync_configuration_is_private
+test_remote_listing_projects_only_safe_fields
+test_invalid_sync_edit_preserves_existing_config
+test_boolean_schema_version_is_rejected
+test_config_snapshot_can_be_restored_by_verify
+test_bisync_baseline_is_per_job_and_dry_run_is_state_neutral
+test_python_cli_preserves_unicode_paths_as_one_argument
+test_legacy_shell_path_delegates_to_python_backend
+test_first_use_migrates_legacy_job_without_running_rclone_sync
 printf 'All %d regression checks passed.\n' "$TESTS"

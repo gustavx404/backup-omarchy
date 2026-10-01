@@ -16,7 +16,7 @@
 set -euo pipefail
 
 DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT="$DIR/src/omarchy-backup.sh"
+SCRIPT="$DIR/src/omarchy-backup"
 BIN="$HOME/.local/bin/omarchy-backup"
 FISH_CONF="$HOME/.config/fish/conf.d/omarchy-backup.fish"
 PLUGIN_SRC="$DIR/omarchy-plugin"
@@ -149,9 +149,13 @@ if (( UNINSTALL )); then
 fi
 
 # ---- dependencias e credenciais -------------------------------------------
-for dep in bash flock timeout tar zstd pgrep md5sum jq readlink rsync sqlite3; do
+for dep in bash python3 rsync tar zstd; do
     have "$dep" || { echo "dependencia ausente: $dep" >&2; exit 3; }
 done
+python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 10))' || {
+    echo "Python 3.10 ou superior e necessario" >&2
+    exit 3
+}
 
 if ! have rclone; then
     if have omarchy; then

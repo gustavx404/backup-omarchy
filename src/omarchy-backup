@@ -1,0 +1,4 @@
+#!/usr/bin/env python3
+from omarchy_backup.cli import main
+
+raise SystemExit(main())

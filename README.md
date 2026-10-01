@@ -16,7 +16,7 @@ configurado no rclone; o projeto não exige uma conta ou provedor específico.
 
 ## Instalar
 
-Instale o rclone e configure ao menos um remote:
+Instale Python 3.10 ou superior, o rclone e configure ao menos um remote:
 
 ```bash
 omarchy-pkg-add rclone
@@ -39,7 +39,9 @@ com `Filen:` mantêm a migração do sync pessoal existente.
 
 ## Estrutura do projeto
 
-- `src/omarchy-backup.sh`: backend e comando `omarchy-backup`.
+- `src/omarchy-backup`: comando e backend Python `omarchy-backup`.
+- `src/omarchy_backup/`: módulos de configuração, snapshots, status e execução.
+- `src/omarchy-backup.sh`: shim Bash para instalações e chamadas antigas.
 - `src/config-excludes.txt` e `src/rclone-filter.txt`: regras de exclusão.
 - `omarchy-plugin/`: painel e widget da barra em QML.
 - `systemd/`: serviço e timer do usuário.
@@ -121,8 +123,8 @@ painel identifica esse estado e pede uma decisão antes de iniciar o resync.
 ## CI e prevenção de regressões
 
 O workflow do GitHub Actions roda em pull requests para qualquer branch, em
-pushes para `main` e manualmente. Ele valida sintaxe Bash, executa ShellCheck
-em nível de erro e roda `tests/regression.sh` com diretório pessoal temporário
+pushes para `main` e manualmente. Ele valida sintaxe Bash e Python, executa
+ShellCheck nos scripts shell e roda `tests/regression.sh` com diretório pessoal temporário
 e um rclone falso; nenhum teste acessa um provider ou altera arquivos do usuário.
 As verificações cobrem o parser do painel, `verify` somente leitura, o modo
 `copy`, snapshots sem favoritos, sanitização de URLs GTK, bloqueio de chaves em
@@ -135,6 +137,7 @@ Rode localmente as mesmas checagens principais antes de publicar:
 
 ```bash
 bash -n install.sh src/omarchy-backup.sh tests/regression.sh
+python3 -m py_compile src/omarchy_backup/*.py src/omarchy-backup
 shellcheck --severity=error install.sh src/omarchy-backup.sh tests/regression.sh
 bash tests/regression.sh
 ```
