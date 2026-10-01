@@ -16,36 +16,43 @@ configurado no rclone; o projeto não exige uma conta ou provedor específico.
 
 ## Instalar
 
-Instale Python 3.10 ou superior, o rclone e configure ao menos um remote:
+Instale Python 3.10 ou superior, rclone, rsync e zstd; configure ao menos um remote:
 
-```bash
-omarchy-pkg-add rclone
+```sh
+omarchy pkg add rclone rsync zstd
 rclone config
 ```
 
-Clone este repositório e execute o instalador:
+Adicione o plugin pelo gerenciador do Omarchy:
 
-```bash
-git clone https://github.com/gustavx404/backup-omarchy.git ~/Projects/backup-omarchy
-cd ~/Projects/backup-omarchy
-./install.sh
+```sh
+omarchy plugin add https://github.com/gustavx404/backup-omarchy.git --enable
 ```
 
-O instalador adiciona o painel, cria o comando `omarchy-backup` e ativa o timer
-de usuário de duas em duas horas. Ele não exige remote chamado `Filen`. Em uma
-instalação nova, se o remote legado `Filen:` não estiver configurado, o painel
-começa sem syncs: abra **+ Novo sync** e crie o primeiro. Instalações antigas
-com `Filen:` mantêm a migração do sync pessoal existente.
+Instale o comando e o timer do usuário a partir dos arquivos do plugin:
+
+```sh
+PLUGIN="$HOME/.config/omarchy/plugins/local.backup-status"
+mkdir -p "$HOME/.local/bin" "$HOME/.config/systemd/user"
+ln -sfn "$PLUGIN/src/omarchy-backup" "$HOME/.local/bin/omarchy-backup"
+cp "$PLUGIN/systemd/omarchy-backup.service" "$PLUGIN/systemd/omarchy-backup.timer" \
+  "$HOME/.config/systemd/user/"
+systemctl --user daemon-reload
+systemctl --user enable --now omarchy-backup.timer
+```
+
+O timer executa de duas em duas horas. O plugin não exige um remote chamado
+`Filen`. Em uma instalação nova sem esse remote, abra **+ Novo sync** e crie o
+primeiro. Instalações antigas com `Filen:` mantêm a migração do sync pessoal.
 
 ## Estrutura do projeto
 
+- `manifest.json`, `BarWidget.qml` e `BackupDashboard.qml`: plugin Omarchy.
 - `src/omarchy-backup`: comando e backend Python `omarchy-backup`.
 - `src/omarchy_backup/`: módulos de configuração, snapshots, status e execução.
-- `src/omarchy-backup.sh`: shim Bash para instalações e chamadas antigas.
 - `src/config-excludes.txt` e `src/rclone-filter.txt`: regras de exclusão.
-- `omarchy-plugin/`: painel e widget da barra em QML.
 - `systemd/`: serviço e timer do usuário.
-- `install.sh`: instalação, atualização e remoção do plugin.
+- `tests/`: testes `unittest` do CLI e do backend.
 
 ## Criar um sync pelo painel
 
@@ -71,7 +78,7 @@ orienta a configurá-los antes de salvar um sync.
 
 ## Comandos
 
-```bash
+```sh
 omarchy-backup status
 omarchy-backup status --json
 omarchy-backup snapshot
@@ -123,9 +130,9 @@ painel identifica esse estado e pede uma decisão antes de iniciar o resync.
 ## CI e prevenção de regressões
 
 O workflow do GitHub Actions roda em pull requests para qualquer branch, em
-pushes para `main` e manualmente. Ele valida sintaxe Bash e Python, executa
-ShellCheck nos scripts shell e roda `tests/regression.sh` com diretório pessoal temporário
-e um rclone falso; nenhum teste acessa um provider ou altera arquivos do usuário.
+pushes para `main` e manualmente. Ele valida a sintaxe Python e roda
+`unittest` com diretório pessoal temporário e um rclone falso; nenhum teste
+acessa um provider ou altera arquivos do usuário.
 As verificações cobrem o parser do painel, `verify` somente leitura, o modo
 `copy`, snapshots sem favoritos, sanitização de URLs GTK, bloqueio de chaves em
 maiúsculas, destinos de snapshot com tentativa de sair da pasta e permissões da
@@ -135,11 +142,10 @@ encontrados redigidos na saída.
 
 Rode localmente as mesmas checagens principais antes de publicar:
 
-```bash
-bash -n install.sh src/omarchy-backup.sh tests/regression.sh
+```sh
 python3 -m py_compile src/omarchy_backup/*.py src/omarchy-backup
-shellcheck --severity=error install.sh src/omarchy-backup.sh tests/regression.sh
-bash tests/regression.sh
+python3 -m unittest discover -s tests -v
+omarchy plugin validate .
 ```
 
 As verificações automatizadas usam um provider simulado. Antes de uma versão,
@@ -150,9 +156,14 @@ nem credenciais nos testes ou nos artefatos do CI.
 
 ## Desinstalar
 
-```bash
-./install.sh --uninstall
+```sh
+systemctl --user disable --now omarchy-backup.timer
+rm -f "$HOME/.config/systemd/user/omarchy-backup.service" \
+  "$HOME/.config/systemd/user/omarchy-backup.timer" \
+  "$HOME/.local/bin/omarchy-backup"
+systemctl --user daemon-reload
+omarchy plugin remove local.backup-status --yes
 ```
 
-O desinstalador remove timer, serviço, link e painel; mantém arquivos
-sincronizados, configuração dos jobs, logs e estado.
+Isso remove o timer, serviço, link e painel; mantém arquivos sincronizados,
+configuração dos jobs, logs e estado.

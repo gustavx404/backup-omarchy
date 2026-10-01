@@ -4,9 +4,9 @@
 
 **Objetivo:** gerenciar syncs pessoais pelo painel Omarchy Backup e executá-los pelo timer global existente.
 
-**Arquitetura:** `src/omarchy-backup.sh` mantém e valida a configuração privada versionada em `~/.config/backup-multiplo/syncs.json`, migra o job Filen atual e carrega jobs ativos no runner. O status JSON expõe jobs configurados e resultados. `omarchy-plugin/BackupDashboard.qml` oferece lista e formulário local para criar, editar, ativar/desativar, remover e executar explicitamente.
+**Arquitetura atual:** `src/omarchy_backup/` mantém e valida a configuração privada versionada em `~/.config/backup-multiplo/syncs.json`, migra o job Filen atual e carrega jobs ativos no runner. O status JSON expõe jobs configurados e resultados. `BackupDashboard.qml` oferece lista e formulário local para criar, editar, ativar/desativar, remover e executar explicitamente.
 
-**Stack:** Bash, jq, rclone, Quickshell QML e systemd --user já usados pelo projeto.
+**Stack atual:** Python 3, rclone, Quickshell QML e systemd --user.
 
 **Especificação:** `docs/superpowers/specs/2026-09-27-dynamic-sync-manager-design.md`.
 
@@ -37,7 +37,7 @@
 
 ### Tarefa 1: armazenamento e gestão de configuração
 
-**Arquivos:** `src/omarchy-backup.sh`.
+**Arquivos:** `src/omarchy_backup/config.py` e `src/omarchy_backup/cli.py`.
 
 **Interfaces:**
 - Produz `syncs list --json`, `syncs upsert --json <objeto>`, `syncs set-enabled <id> <0|1>` e `syncs remove <id>`.
@@ -51,11 +51,11 @@
 - Ao retornar remotes, projete a resposta para `name` e `type`; não devolva descrição, origem nem opções do rclone.
 - Grave em arquivo temporário no mesmo diretório, aplique `0600` e renomeie atomicamente.
 - Use fallback legado somente se o arquivo ainda não existir e a inicialização ainda não ocorreu; JSON inválido deve interromper execução sem acionar o fallback.
-- Valide sintaxe com `bash -n`; faça inspeção dirigida das funções de validação e serialização.
+- Valide com `python3 -m unittest discover -s tests -v` e compilação sintática Python.
 
 ### Tarefa 2: integração de jobs ao runner e status
 
-**Arquivos:** `src/omarchy-backup.sh`, `src/rclone-filter.txt`.
+**Arquivos:** `src/omarchy_backup/runner.py`, `src/rclone-filter.txt`.
 
 **Consome:** configuração e funções de Tarefa 1.
 
@@ -71,7 +71,7 @@
 
 ### Tarefa 3: painel de gerenciamento
 
-**Arquivos:** `omarchy-plugin/BackupDashboard.qml`.
+**Arquivos:** `BackupDashboard.qml`.
 
 **Consome:** `status --json.syncs` e comandos de gestão de Tarefa 1.
 
@@ -94,6 +94,6 @@
 
 - Documente gerenciamento pelo menu, formato/local privado de configuração, modos e risco de exclusão do espelho.
 - Atualize a lista de comandos e instalação/migração.
-- Execute validações estáticas específicas (bash -n, jq, validador de plugin quando disponível), `git diff --check` e revisão completa do diff.
+- Execute os testes Python, `omarchy plugin validate .`, `git diff --check` e revisão completa do diff.
 - Não instale no diretório do usuário nem reinicie Quickshell nesta etapa; isso exige autorização de escrita fora do workspace.
 - Registre resultados e limitações sem criar commit.

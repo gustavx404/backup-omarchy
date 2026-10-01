@@ -20,19 +20,13 @@ jobs:
       - name: Install validation tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes jq rsync zstd shellcheck
-
-      - name: Check Bash syntax
-        run: bash -n install.sh src/omarchy-backup.sh tests/regression.sh
+          sudo apt-get install --yes rsync zstd
 
       - name: Check Python syntax
         run: python3 -m py_compile src/omarchy_backup/*.py src/omarchy-backup
 
-      - name: Run ShellCheck
-        run: shellcheck --severity=error install.sh src/omarchy-backup.sh tests/regression.sh
-
-      - name: Run regression checks with isolated fake remotes
-        run: bash tests/regression.sh
+      - name: Run Python regression tests with isolated fake remotes
+        run: python3 -m unittest discover -s tests -v
 
   secrets:
     name: Scan repository for secrets

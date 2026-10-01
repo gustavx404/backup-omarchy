@@ -15,7 +15,7 @@ CPUSchedulingPolicy=idle
 
 ExecStart=%h/.local/bin/omarchy-backup
 
-# bisync no backend cifrado do Filen pode demorar; o script ja tem timeout
+# bisync no backend cifrado do Filen pode demorar; o backend ja tem timeout
 # interno por job (RCLONE_MAX_SECONDS). Este e so o teto do systemd.
 TimeoutStartSec=4h
 
