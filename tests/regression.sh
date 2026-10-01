@@ -192,6 +192,31 @@ test_uppercase_secret_blocks_config_snapshot() {
     pass 'case-insensitive secret scanning blocks configuration snapshots'
 }
 
+test_plugin_source_fields_do_not_block_config_snapshot() {
+    new_sandbox
+    write_config copy '{"omarchy":true,"favorites":false}'
+    mkdir -p "$BACKUP_CONFIG_ROOT/hypr" "$BACKUP_CONFIG_ROOT/systemd/user"
+    printf '[Unit]\n' > "$BACKUP_CONFIG_ROOT/systemd/user/omarchy-backup.service"
+    plugin="$BACKUP_CONFIG_ROOT/omarchy/plugins/yubikey"
+    mkdir -p "$plugin/tests"
+    cat > "$plugin/bridge.py" <<'PY'
+def validate_password(raw_password: str) -> bool:
+    password = ""
+    return bool(raw_password)
+PY
+    cat > "$plugin/Panel.qml" <<'QML'
+readonly property string password: String(passwords[keyId] || "")
+QML
+    cat > "$plugin/tests/test_bridge.py" <<'PY'
+fixture = b'{"password":"","credential":"test"}'
+PY
+
+    "$SCRIPT" snapshot >/dev/null || fail 'source code mentioning credential fields blocked the snapshot'
+    [[ -s "$BACKUP_CONFIG_DEST/config-latest.tar.zst" ]] \
+        || fail 'safe configuration snapshot was not created'
+    pass 'source code mentioning credential fields does not block snapshots'
+}
+
 test_snapshot_target_rejects_traversal() {
     new_sandbox
     write_config
@@ -224,6 +249,7 @@ test_copy_does_not_receive_backup_dir
 test_empty_favorites_preserve_previous_snapshot
 test_gtk_bookmarks_are_sanitized
 test_uppercase_secret_blocks_config_snapshot
+test_plugin_source_fields_do_not_block_config_snapshot
 test_snapshot_target_rejects_traversal
 test_sync_configuration_is_private
 printf 'All %d regression checks passed.\n' "$TESTS"

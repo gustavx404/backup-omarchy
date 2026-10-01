@@ -729,7 +729,9 @@ snapshot_config() {
     # cancela a rodada antes que o arquivo seja empacotado ou enviado.
     local suspect
     suspect="$(grep -RIlEi \
-        '(^|[^[:alnum:]])(api[_-]?key|apikey|access[_-]?token|auth[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|secret([_-]?(key|access[_-]?key))?|password|passwd|private[_-]?key|credentials?|aws[_-]?secret[_-]?access[_-]?key)"?[[:space:]]*[:=][[:space:]]*[^[:space:]]' \
+        --exclude='*.py' --exclude='*.qml' --exclude='*.js' --exclude='*.ts' \
+        --exclude='*.sh' --exclude='*.md' --exclude='*.css' \
+        '(^|[^[:alnum:]_])(api[_-]?key|apikey|access[_-]?token|auth[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|secret([_-]?(key|access[_-]?key))?|password|passwd|private[_-]?key|credentials?|aws[_-]?secret[_-]?access[_-]?key)(["'"']?)[[:space:]]*[:=][[:space:]]*["'"']?[^[:space:]"'"']' \
         "$stage/config" 2>/dev/null || true)"
     if [[ -n "$suspect" ]]; then
         echo "omarchy: possivel segredo detectado; snapshot cancelado:" >&2
@@ -1028,13 +1030,15 @@ check_rclone_stack() {
 }
 
 notify_backup_failure() {
-    local count="${1:-1}" total="${2:-1}" detail="${3:-Consulte os logs.}"
+    local count="${1:-1}" total="${2:-1}"
     [[ "$NOTIFY_FAILURE" == "1" ]] || return 0
     command -v omarchy-notification-send >/dev/null 2>&1 || return 0
-    omarchy-notification-send --app-name omarchy-backup -u critical -g "\uf071" \
+    omarchy-notification-send --app-name omarchy-backup -u critical -g $'\uf071' \
         "Falha no Omarchy Backup" \
-        "$count de $total tarefa(s) falharam. $detail" \
-        --exec xdg-open "$LOG_DIR" >/dev/null 2>&1 || true
+        "$count de $total tarefa(s) falharam. Clique para diagnosticar." \
+        --exec omarchy-agent --prompt \
+        "Diagnostique a falha mais recente do Omarchy Backup. Consulte o estado com omarchy-backup status --json, os logs mais recentes em $LOG_DIR e o journal do serviço omarchy-backup.service. Leia o código em $SCRIPT_DIR para correlacionar o erro. Não mostre segredos nem logs completos. Não altere arquivos, não execute backup nem resync; apresente a causa provável, as evidências e a correção sugerida." \
+        >/dev/null 2>&1 || true
 }
 
 RUN_COMPLETED=0 RUN_PHASE="pre-flight" RUN_FAILURE_CODE="preflight-failed"
@@ -1047,7 +1051,7 @@ handle_unexpected_exit() {
         "$(date +%s)" "$(date '+%F %T')" "sistema" "$RUN_PHASE" "FALHOU" "0" > "$STATUS_FILE"
     printf '%s\t%s\tfail\t1\t1\t%s\n' "$(date +%s)" "$(date '+%F %T')" "$RUN_FAILURE_CODE" > "$LASTRUN_FILE"
     record_history fail "$(( $(date +%s) - RUN_START_EPOCH ))" 1 1
-    notify_backup_failure 1 1 "Etapa: $RUN_PHASE (codigo $ec)."
+    notify_backup_failure 1 1
 }
 trap 'handle_unexpected_exit $?' EXIT
 
@@ -1330,7 +1334,7 @@ fi
 
 if (( falhas > 0 )); then
     RUN_COMPLETED=1
-    notify_backup_failure "$falhas" "$njobs" "Consulte os logs."
+    notify_backup_failure "$falhas" "$njobs"
     echo "=== TERMINOU COM $falhas FALHA(S) ==="
     exit 1
 fi
